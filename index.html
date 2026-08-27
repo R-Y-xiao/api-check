@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>API 站余额监控</title>
+  <title>站子余额监控</title>
   <style>
     body {
       margin: 0;
@@ -34,6 +34,224 @@
     .add-drawer {
       display: none;
       background: #131b2e;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .add-drawer.active { display: flex; }
+    input {
+      background: #090d16;
+      border: 1px solid #1e293b;
+      color: #fff;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      outline: none;
+    }
+    .card {
+      background: #131b2e;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .card-top { display: flex; justify-content: space-between; align-items: center; }
+    .site-name { font-size: 0.95rem; font-weight: 600; }
+    .status { font-size: 0.7rem; color: #94a3b8; }
+    .status.err { color: #ef4444; }
+    .card-metrics {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(0,0,0,0.25);
+      padding: 10px 14px;
+      border-radius: 6px;
+    }
+    .metric-label { font-size: 0.7rem; color: #94a3b8; margin-bottom: 2px; }
+    .metric-val { font-size: 1.25rem; font-weight: 700; font-family: monospace; color: #10b981; }
+    .debug-info { font-size: 0.7rem; color: #94a3b8; word-break: break-all; }
+    .card-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .btn-mini { padding: 4px 10px; font-size: 0.75rem; border-radius: 4px; background: #1e293b; }
+  </style>
+</head>
+<body>
+  <div class="top-bar">
+    <div class="title">站子余额监控</div>
+    <div class="btn-group">
+      <button class="alt" onclick="toggleAdd()">+ 添加</button>
+      <button onclick="checkAll()">全部刷新</button>
+    </div>
+  </div>
+
+  <div class="add-drawer" id="addDrawer">
+    <input type="text" id="name" placeholder="站点名称 (如: 空悲切)">
+    <input type="text" id="url" placeholder="站点地址 (如: https://api.xxx.com)">
+    <input type="password" id="key" placeholder="访问令牌 (Access Token)">
+    <button onclick="addSite()">保存站点</button>
+  </div>
+
+  <div id="siteList"></div>
+
+  <script>
+    var sites = JSON.parse(localStorage.getItem('api_sites_gh_final') || '[]');
+
+    function toggleAdd() {
+      var d = document.getElementById('addDrawer');
+      d.classList.toggle('active');
+    }
+
+    function saveSites() {
+      localStorage.setItem('api_sites_gh_final', JSON.stringify(sites));
+    }
+
+    function addSite() {
+      var name = document.getElementById('name').value.trim();
+      var rawUrl = document.getElementById('url').value.trim().replace(/\/+$/, '').replace(/\/v1$/, '');
+      var key = document.getElementById('key').value.replace(/[\r\n\s]/g, '');
+
+      if (!name || !rawUrl || !key) return;
+
+      sites.push({ id: Date.now(), name: name, url: rawUrl, key: key, balance: '-', debug: '等待刷新', status: '未查' });
+      saveSites();
+      render();
+      toggleAdd();
+      document.getElementById('name').value = '';
+      document.getElementById('url').value = '';
+      document.getElementById('key').value = '';
+    }
+
+    function removeSite(id) {
+      sites = sites.filter(function(s) { return s.id !== id; });
+      saveSites();
+      render();
+    }
+
+    function findQuota(obj) {
+      if (!obj || typeof obj !== 'object') return null;
+      if (typeof obj.quota === 'number') return obj.quota;
+      if (typeof obj.remain_quota === 'number') return obj.remain_quota;
+      if (typeof obj.balance === 'number') return obj.balance * 500000;
+      if (typeof obj.money === 'number') return obj.money * 500000;
+      for (var k in obj) {
+        if (typeof obj[k] === 'object') {
+          var res = findQuota(obj[k]);
+          if (res !== null) return res;
+        }
+      }
+      return null;
+    }
+
+    async function sendRequest(targetUrl, token) {
+      var headers = {
+        'Authorization': 'Bearer ' + token,
+        'token': token,
+        'Content-Type': 'application/json'
+      };
+
+      // 1. 直连尝试
+      try {
+        var res = await fetch(targetUrl, { headers: headers });
+        if (res.ok) return await res.json();
+      } catch (e) {}
+
+      // 2. 穿透代理通道
+      var proxy = 'https://corsproxy.io/?url=' + encodeURIComponent(targetUrl);
+      var pres = await fetch(proxy, { headers: headers });
+      if (!pres.ok) throw new Error('HTTP ' + pres.status);
+      return await pres.json();
+    }
+
+    async function queryAccount(site) {
+      var endpoints = ['/api/user/self', '/api/user/dashboard', '/api/status'];
+      var lastErr = '';
+
+      for (var i = 0; i < endpoints.length; i++) {
+        try {
+          var json = await sendRequest(site.url + endpoints[i], site.key);
+          var q = findQuota(json);
+          if (q !== null) {
+            var usd = (q / 500000).toFixed(2);
+            var uname = (json.data && (json.data.username || json.data.display_name)) || '成功';
+            return { balance: '$' + usd, debug: '用户: ' + uname };
+          }
+        } catch (e) {
+          lastErr = e.message;
+        }
+      }
+      throw new Error(lastErr || '无响应');
+    }
+
+    function querySite(id) {
+      var site = sites.find(function(s) { return s.id === id; });
+      if (!site) return;
+
+      site.status = '查询中';
+      render();
+
+      queryAccount(site)
+        .then(function(res) {
+          site.balance = res.balance;
+          site.debug = res.debug;
+          site.status = '正常';
+          saveSites();
+          render();
+        })
+        .catch(function(err) {
+          site.status = '失败';
+          site.debug = err.message;
+          site.balance = 'Err';
+          saveSites();
+          render();
+        });
+    }
+
+    function checkAll() {
+      for (var i = 0; i < sites.length; i++) {
+        querySite(sites[i].id);
+      }
+    }
+
+    function render() {
+      var list = document.getElementById('siteList');
+      if (sites.length === 0) {
+        list.innerHTML = '<div style="text-align:center;color:#64748b;font-size:0.8rem;padding:40px 0;">暂无站点，点击右上角添加</div>';
+        return;
+      }
+      var html = '';
+      for (var i = 0; i < sites.length; i++) {
+        var s = sites[i];
+        var isErr = s.status === '失败' ? ' err' : '';
+        html += '<div class="card">' +
+          '<div class="card-top">' +
+            '<span class="site-name">' + s.name + '</span>' +
+            '<span class="status' + isErr + '">' + s.status + '</span>' +
+          '</div>' +
+          '<div class="card-metrics">' +
+            '<div>' +
+              '<div class="metric-label">账户总余额</div>' +
+              '<div class="metric-val">' + s.balance + '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="debug-info">' + s.debug + '</div>' +
+          '<div class="card-actions">' +
+            '<button class="btn-mini" onclick="querySite(' + s.id + ')">刷新</button>' +
+            '<button class="del" onclick="removeSite(' + s.id + ')">✕</button>' +
+          '</div>' +
+        '</div>';
+      }
+      list.innerHTML = html;
+    }
+
+    render();
+  </script>
+</body>
+</html>
       border: 1px solid #1e293b;
       border-radius: 8px;
       padding: 12px;
