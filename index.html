@@ -1,0 +1,143 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>余额监控</title><style>body{margin:0;padding:16px;background:#0f172a;color:#fff;font-family:sans-serif}.box{background:#1e293b;padding:12px;border-radius:8px;margin-bottom:12px}input{width:100%;box-sizing:border-box;padding:8px;margin:4px 0;background:#090d16;border:1px solid #334155;color:#fff;border-radius:4px}button{background:#3b82f6;color:#fff;border:0;padding:8px 16px;border-radius:4px;width:100%;margin-top:4px;font-weight:bold}.card{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:12px;margin-top:10px}.val{font-size:22px;color:#10b981;font-weight:bold;margin:6px 0}.info{font-size:12px;color:#94a3b8}</style></head><body><h3>API 余额监控</h3><div class="box"><input id="n" placeholder="站点名称 (如: 空悲切)"><input id="u" placeholder="站点网址 (如: https://api.xxx.com)"><input id="k" placeholder="访问令牌 (Access Token)"><button onclick="add()">添加并查询</button></div><div id="list"></div><script>var sites=JSON.parse(localStorage.getItem('api_min_v2')||'[]');function save(){localStorage.setItem('api_min_v2',JSON.stringify(sites))}function findQ(o){if(!o||typeof o!=='object')return null;if(typeof o.quota==='number')return o.quota;if(typeof o.remain_quota==='number')return o.remain_quota;for(var k in o){var r=findQ(o[k]);if(r!==null)return r}return null}function query(s){var u=s.u.replace(/\/+$/,'').replace(/\/v1$/,'');var target=u+'/api/user/self';var proxy='https://api.allorigins.win/raw?url='+encodeURIComponent(target);fetch(proxy,{headers:{'Authorization':'Bearer '+s.k}}).then(function(r){return r.json()}).then(function(j){var q=findQ(j);s.bal=q!==null?'$'+(q/500000).toFixed(2):'未识别额度';s.msg='正常';save();render()}).catch(function(e){s.bal='失败';s.msg=e.message;save();render()})}function add(){var n=document.getElementById('n').value.trim();var u=document.getElementById('u').value.trim();var k=document.getElementById('k').value.trim();if(!n||!u||!k)return;var s={n:n,u:u,k:k,bal:'查询中...',msg:''};sites.push(s);save();render();query(s);document.getElementById('n').value='';document.getElementById('u').value='';document.getElementById('k').value=''}function del(i){sites.splice(i,1);save();render()}function render(){var h='';for(var i=0;i<sites.length;i++){var s=sites[i];h+='<div class="card"><b>'+s.n+'</b><div class="val">'+s.bal+'</div><div class="info">'+s.msg+'</div><button style="background:#ef4444;margin-top:8px" onclick="del('+i+')">删除</button></div>'}document.getElementById('list').innerHTML=h}render();for(var i=0;i<sites.length;i++){query(sites[i])}</script></body></html>  '<div class="val">' + s.bal + '</div>' +
+         '<div class="info">' + s.msg + '</div>' +
+         '<button style="background:#ef4444;margin-top:8px" onclick="del(' + i + ')">删除</button></div>';
+  }
+  document.getElementById('list').innerHTML = h;
+}
+render();
+for(var i=0; i<sites.length; i++){ query(sites[i]); }
+</script>
+</body>
+</html>en)">
+    <button onclick="addSite()">保存站点</button>
+  </div>
+
+  <div id="siteList"></div>
+
+  <script>
+    var sites = JSON.parse(localStorage.getItem('api_sites_gh_live') || '[]');
+
+    function toggleAdd() {
+      var d = document.getElementById('addDrawer');
+      d.classList.toggle('active');
+    }
+
+    function saveSites() {
+      localStorage.setItem('api_sites_gh_live', JSON.stringify(sites));
+    }
+
+    function addSite() {
+      var name = document.getElementById('name').value.trim();
+      var rawUrl = document.getElementById('url').value.trim().replace(/\/+$/, '').replace(/\/v1$/, '');
+      var key = document.getElementById('key').value.replace(/[\r\n\s]/g, '');
+
+      if (!name || !rawUrl || !key) return;
+
+      sites.push({ id: Date.now(), name: name, url: rawUrl, key: key, balance: '-', debug: '等待刷新', status: '未查' });
+      saveSites();
+      render();
+      toggleAdd();
+      document.getElementById('name').value = '';
+      document.getElementById('url').value = '';
+      document.getElementById('key').value = '';
+    }
+
+    function removeSite(id) {
+      sites = sites.filter(function(s) { return s.id !== id; });
+      saveSites();
+      render();
+    }
+
+    function findQuota(obj) {
+      if (!obj || typeof obj !== 'object') return null;
+      if (typeof obj.quota === 'number') return obj.quota;
+      if (typeof obj.remain_quota === 'number') return obj.remain_quota;
+      if (typeof obj.balance === 'number') return obj.balance * 500000;
+      for (var k in obj) {
+        if (typeof obj[k] === 'object') {
+          var res = findQuota(obj[k]);
+          if (res !== null) return res;
+        }
+      }
+      return null;
+    }
+
+    function querySite(id) {
+      var site = sites.find(function(s) { return s.id === id; });
+      if (!site) return;
+
+      site.status = '查询中';
+      render();
+
+      fetch(site.url + '/api/user/self', {
+        headers: {
+          'Authorization': 'Bearer ' + site.key,
+          'Content-Type': 'application/json'
+        }
+      })
+      .then(function(res) { return res.json(); })
+      .then(function(json) {
+        var q = findQuota(json);
+        if (q !== null) {
+          site.balance = '$' + (q / 500000).toFixed(2);
+          var uname = (json.data && (json.data.username || json.data.display_name)) || '主账号';
+          site.debug = '用户: ' + uname;
+          site.status = '正常';
+        } else {
+          site.balance = 'Err';
+          site.debug = '未解析到quota字段';
+          site.status = '失败';
+        }
+        saveSites();
+        render();
+      })
+      .catch(function(err) {
+        site.status = '失败';
+        site.debug = err.message;
+        site.balance = 'Err';
+        saveSites();
+        render();
+      });
+    }
+
+    function checkAll() {
+      for (var i = 0; i < sites.length; i++) {
+        querySite(sites[i].id);
+      }
+    }
+
+    function render() {
+      var list = document.getElementById('siteList');
+      if (sites.length === 0) {
+        list.innerHTML = '<div style="text-align:center;color:#64748b;font-size:0.8rem;padding:40px 0;">暂无站点，点击右上角添加</div>';
+        return;
+      }
+      var html = '';
+      for (var i = 0; i < sites.length; i++) {
+        var s = sites[i];
+        var isErr = s.status === '失败' ? ' err' : '';
+        html += '<div class="card">' +
+          '<div class="card-top">' +
+            '<span class="site-name">' + s.name + '</span>' +
+            '<span class="status' + isErr + '">' + s.status + '</span>' +
+          '</div>' +
+          '<div class="card-metrics">' +
+            '<div>' +
+              '<div class="metric-label">账户总余额</div>' +
+              '<div class="metric-val">' + s.balance + '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="debug-info">' + s.debug + '</div>' +
+          '<div class="card-actions">' +
+            '<button class="btn-mini" onclick="querySite(' + s.id + ')">刷新</button>' +
+            '<button class="del" onclick="removeSite(' + s.id + ')">✕</button>' +
+          '</div>' +
+        '</div>';
+      }
+      list.innerHTML = html;
+    }
+
+    render();
+  </script>
+</body>
+</html>
